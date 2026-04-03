@@ -12,7 +12,8 @@ const CARDZONE_REDIRECT_URL =
 const CARDZONE_PROFILE_URL = process.env.CARDZONE_PROFILE_URL || '';
 const RESPONSE_TYPE = process.env.RESPONSE_TYPE || 'STRING';
 const DEFAULT_CURRENCY = process.env.DEFAULT_CURRENCY || '064';
-const ENABLE_MKREQ_MAC = process.env.ENABLE_MKREQ_MAC === 'true';
+const ENABLE_MKREQ_MAC_WITH_PRESTORED_KEY = process.env.ENABLE_MKREQ_MAC_WITH_PRESTORED_KEY === 'true';
+const DEBUG_CARDZONE = process.env.DEBUG_CARDZONE !== 'false';
 const TEMP_DIR = '/tmp'; // Vercel uses /tmp for temp storage
 
 const txStore = new Map();
@@ -234,8 +235,14 @@ async function doMkReq({ merchantId, purchaseId, merchantPublicKeyBase64Url, mer
     pubKey: merchantPublicKeyBase64Url,
   };
 
-  if (ENABLE_MKREQ_MAC) {
+  if (ENABLE_MKREQ_MAC_WITH_PRESTORED_KEY) {
     payload.mac = signSha256WithRsaBase64Url(mkReqSignString(payload), merchantPrivateKeyPem);
+  }
+
+  if (DEBUG_CARDZONE) {
+    console.log('[Cardzone][mkReq] URL:', CARDZONE_MKREQ_URL);
+    console.log('[Cardzone][mkReq] include mac:', ENABLE_MKREQ_MAC_WITH_PRESTORED_KEY ? 'YES' : 'NO');
+    console.log('[Cardzone][mkReq] payload:', JSON.stringify(payload));
   }
 
   const r = await fetch(CARDZONE_MKREQ_URL, {
@@ -452,6 +459,11 @@ async function handleStartPayment(req, res) {
     merchantPrivateKeyPem: keys.privateKeyPem,
   });
 
+  if (DEBUG_CARDZONE) {
+    console.log('[Cardzone][mkReq] merchant public key (base64url, no padding):', keys.publicKeyBase64Url);
+    console.log('[Cardzone][mkReq] key modulus length: 2048');
+  }
+
   const profileRes = await fetchCardzoneMerchantProfile(merchantId);
   const resolvedCurrency = resolveCurrency({
     requestedCurrency: (form.currency || DEFAULT_CURRENCY).trim(),
@@ -493,22 +505,58 @@ async function handleStartPayment(req, res) {
   const mpiReq = {
     MPI_TRANS_TYPE: 'SALES',
     MPI_MERC_ID: tx.merchantId,
+    MPI_PAN: '',
+    MPI_CARD_HOLDER_NAME: '',
+    MPI_PAN_EXP: '',
+    MPI_CVV2: '',
     MPI_TRXN_ID: tx.txnId,
+    MPI_ORI_TRXN_ID: '',
     MPI_PURCH_DATE: tx.purchDate,
     MPI_PURCH_CURR: tx.currency,
     MPI_PURCH_AMT: tx.amountMinor,
+    MPI_ADDR_MATCH: '',
+    MPI_BILL_ADDR_STATE: '',
     MPI_EMAIL: tx.email,
+    MPI_HOME_PHONE: '',
+    MPI_HOME_PHONE_CC: '',
+    MPI_WORK_PHONE: '',
+    MPI_WORK_PHONE_CC: '',
     MPI_MOBILE_PHONE: tx.mobilePhone,
     MPI_MOBILE_PHONE_CC: tx.mobilePhoneCc,
     MPI_BILL_ADDR_CNTRY: tx.billCountry,
     MPI_BILL_ADDR_CITY: tx.billCity,
     MPI_BILL_ADDR_POSTCODE: tx.billPostcode,
     MPI_BILL_ADDR_LINE1: tx.billLine1,
+    MPI_BILL_ADDR_LINE2: '',
+    MPI_BILL_ADDR_LINE3: '',
+    MPI_SHIP_ADDR_CITY: '',
+    MPI_SHIP_ADDR_STATE: '',
+    MPI_SHIP_ADDR_CNTRY: '',
+    MPI_SHIP_ADDR_POSTCODE: '',
+    MPI_SHIP_ADDR_LINE1: '',
+    MPI_SHIP_ADDR_LINE2: '',
+    MPI_SHIP_ADDR_LINE3: '',
+    MPI_LINE_ITEM: [],
     MPI_RESPONSE_TYPE: tx.responseType,
     MPI_RESPONSE_LINK: tx.responseLink,
   };
 
-  mpiReq.MPI_MAC = signSha256WithRsaBase64Url(mpiReqSignString(mpiReq), tx.merchantPrivateKeyPem);
+  const mpiPreSignString = mpiReqSignString(mpiReq);
+  mpiReq.MPI_MAC = signSha256WithRsaBase64Url(mpiPreSignString, tx.merchantPrivateKeyPem);
+
+  if (DEBUG_CARDZONE) {
+    console.log('[Cardzone][mercReq] endpoint:', CARDZONE_REDIRECT_URL);
+    console.log('[Cardzone][mercReq] flow: HTML FORM POST (hosted payment page)');
+    console.log('[Cardzone][mercReq] PAN/EXP/CVV/Cardholder sent from merchant: NO');
+    console.log('[Cardzone][mercReq] fields used for signing:', JSON.stringify({
+      ...mpiReq,
+      MPI_MAC: undefined,
+    }));
+    console.log('[Cardzone][mercReq] pre-sign concatenated string:', mpiPreSignString);
+    console.log('[Cardzone][mercReq] generated MPI_MAC (base64url, no padding):', mpiReq.MPI_MAC);
+    console.log('[Cardzone][mkReq] mac omitted unless pre-stored key exchange enabled:', ENABLE_MKREQ_MAC_WITH_PRESTORED_KEY ? 'INCLUDED' : 'OMITTED');
+  }
+
   tx.requestFields = mpiReq;
   tx.status = 'REDIRECTED_TO_HOSTED_PAGE';
   txStore.set(tx.txnId, tx);
