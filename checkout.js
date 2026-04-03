@@ -230,6 +230,7 @@ function mpiReqSignString(fields) {
     fields.MPI_MOBILE_PHONE_CC,
     flattenedLineItems,
     fields.MPI_RESPONSE_TYPE,
+    fields.MPI_RESPONSE_LINK,
   ].map(v => v || '').join('');
 }
 
@@ -482,7 +483,7 @@ function renderCheckoutPage() {
 
 function renderAutoPostPage(action, fields) {
   const inputs = Object.entries(fields)
-    .filter(([, v]) => v !== undefined && v !== null && v !== '')
+    .filter(([, v]) => v !== undefined && v !== null)
     .map(([k, v]) => `<input type="hidden" name="${escapeHtml(k)}" value="${escapeHtml(v)}">`)
     .join('\n');
 

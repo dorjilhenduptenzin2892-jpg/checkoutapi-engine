@@ -202,6 +202,7 @@ function mpiReqSignString(fields) {
     fields.MPI_MOBILE_PHONE_CC,
     flattenedLineItems,
     fields.MPI_RESPONSE_TYPE,
+    fields.MPI_RESPONSE_LINK,
   ].map(v => v || '').join('');
 }
 
@@ -407,7 +408,7 @@ function renderCheckoutPage(baseUrl) {
 
 function renderAutoPostPage(action, fields) {
   const inputs = Object.entries(fields)
-    .filter(([, v]) => v !== undefined && v !== null && v !== '')
+    .filter(([, v]) => v !== undefined && v !== null)
     .map(([k, v]) => `<input type="hidden" name="${escapeHtml(k)}" value="${escapeHtml(v)}">`)
     .join('\n');
 
@@ -557,6 +558,7 @@ async function handleStartPayment(req, res) {
     MPI_MOBILE_PHONE_CC: mpiReq.MPI_MOBILE_PHONE_CC || '',
     MPI_LINE_ITEM: Array.isArray(mpiReq.MPI_LINE_ITEM) ? mpiReq.MPI_LINE_ITEM : [],
     MPI_RESPONSE_TYPE: mpiReq.MPI_RESPONSE_TYPE || '',
+    MPI_RESPONSE_LINK: mpiReq.MPI_RESPONSE_LINK || '',
   }));
   console.log('[Cardzone][signing] Pre-sign concatenated string:', mpiReqSignInput);
   console.log('[Cardzone][signing] Generated MPI_MAC (base64url, no padding):', generatedMpiMac);
