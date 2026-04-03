@@ -9,7 +9,9 @@ const CARDZONE_REDIRECT_URL =
   process.env.CARDZONE_REDIRECT_URL ||
   process.env.CARDZONE_MERCREQ_URL ||
   'https://uatczsecure.bob.bt/3dss/mercReq';
+const CARDZONE_PROFILE_URL = process.env.CARDZONE_PROFILE_URL || '';
 const RESPONSE_TYPE = process.env.RESPONSE_TYPE || 'STRING';
+const DEFAULT_CURRENCY = process.env.DEFAULT_CURRENCY || '064';
 const ENABLE_MKREQ_MAC = process.env.ENABLE_MKREQ_MAC === 'true';
 const TEMP_DIR = '/tmp'; // Vercel uses /tmp for temp storage
 
@@ -247,6 +249,83 @@ async function doMkReq({ merchantId, purchaseId, merchantPublicKeyBase64Url, mer
   return data;
 }
 
+function normalizeCurrency(value) {
+  const v = String(value || '').trim();
+  return /^\d{3}$/.test(v) ? v : '';
+}
+
+function extractCurrencyCandidates(payload) {
+  if (!payload || typeof payload !== 'object') return [];
+
+  const keys = [
+    'currency', 'currencies', 'currencyCode', 'currencyCodes',
+    'defaultCurrency', 'txnCurrency', 'supportedCurrencies', 'allowedCurrencies',
+  ];
+
+  const out = new Set();
+
+  for (const k of keys) {
+    const raw = payload[k];
+    if (Array.isArray(raw)) {
+      for (const item of raw) {
+        const n = normalizeCurrency(item?.code || item?.currency || item);
+        if (n) out.add(n);
+      }
+      continue;
+    }
+
+    if (raw && typeof raw === 'object') {
+      const n = normalizeCurrency(raw.code || raw.currency || raw.value);
+      if (n) out.add(n);
+      continue;
+    }
+
+    const n = normalizeCurrency(raw);
+    if (n) out.add(n);
+  }
+
+  if (payload.data && typeof payload.data === 'object') {
+    for (const c of extractCurrencyCandidates(payload.data)) out.add(c);
+  }
+
+  return [...out];
+}
+
+async function fetchCardzoneMerchantProfile(merchantId) {
+  if (!CARDZONE_PROFILE_URL) return null;
+  try {
+    const url = CARDZONE_PROFILE_URL.includes('{merchantId}')
+      ? CARDZONE_PROFILE_URL.replace('{merchantId}', encodeURIComponent(merchantId))
+      : CARDZONE_PROFILE_URL;
+
+    const r = await fetch(url, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ merchantId }),
+    });
+
+    const text = await r.text();
+    try {
+      return JSON.parse(text);
+    } catch {
+      return null;
+    }
+  } catch {
+    return null;
+  }
+}
+
+function resolveCurrency({ requestedCurrency, mkReqRes, profileRes }) {
+  const requested = normalizeCurrency(requestedCurrency);
+  const fromProfile = extractCurrencyCandidates(profileRes);
+  const fromMkReq = extractCurrencyCandidates(mkReqRes);
+  const supported = fromProfile.length ? fromProfile : fromMkReq;
+
+  if (!supported.length) return requested || DEFAULT_CURRENCY;
+  if (requested && supported.includes(requested)) return requested;
+  return supported[0];
+}
+
 function renderCheckoutPage(baseUrl) {
   return `<!doctype html>
 <html>
@@ -278,7 +357,7 @@ function renderCheckoutPage(baseUrl) {
       <form method="post" action="/start-payment">
         <div class="grid">
           <div><label>Merchant ID</label><input name="merchantId" value="${escapeHtml(MERCHANT_ID)}" required /></div>
-          <div><label>Currency</label><input name="currency" value="840" readonly style="background:#f3f4f6;cursor:not-allowed" /><small style="color:#6b7280">USD (840)</small></div>
+          <div><label>Currency (ISO 4217 numeric)</label><input name="currency" value="${escapeHtml(DEFAULT_CURRENCY)}" required /><small style="color:#6b7280">If Cardzone profile API is configured, this will be auto-resolved.</small></div>
           <div><label>Amount</label><input name="amount" value="1.00" required /></div>
           <div><label>Order / Purchase ID</label><input name="purchaseId" placeholder="Leave blank to auto-generate" /></div>
           <div><label>Order Reference</label><input name="orderRef" placeholder="Optional merchant order reference" /></div>
@@ -363,6 +442,13 @@ async function handleStartPayment(req, res) {
     merchantPrivateKeyPem: keys.privateKeyPem,
   });
 
+  const profileRes = await fetchCardzoneMerchantProfile(merchantId);
+  const resolvedCurrency = resolveCurrency({
+    requestedCurrency: (form.currency || DEFAULT_CURRENCY).trim(),
+    mkReqRes,
+    profileRes,
+  });
+
   if (mkReqRes.errorCode !== '000' || !mkReqRes.pubKey) {
     return html(res, 400, renderReturnPage('mkReq failed', mkReqRes));
   }
@@ -375,7 +461,7 @@ async function handleStartPayment(req, res) {
     txnId,
     purchDate,
     amountMinor,
-    currency: (form.currency || '064').trim(),
+    currency: resolvedCurrency,
     email: (form.email || '').trim(),
     mobilePhone: (form.mobilePhone || '').trim(),
     mobilePhoneCc: (form.mobilePhoneCc || '').trim(),
@@ -388,6 +474,8 @@ async function handleStartPayment(req, res) {
     merchantPrivateKeyPem: keys.privateKeyPem,
     cardzonePublicKeyBase64Url: mkReqRes.pubKey,
     mkReqRes,
+    profileRes,
+    currencySource: profileRes ? 'cardzone-profile' : 'request-or-mkReq',
     status: 'REQUEST_PREPARED',
     createdAt: new Date().toISOString(),
   };
