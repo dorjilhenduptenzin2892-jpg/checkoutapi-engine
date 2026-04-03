@@ -3,7 +3,7 @@ const { URL } = require('url');
 const fs = require('fs').promises;
 const path = require('path');
 
-const MERCHANT_ID = process.env.MERCHANT_ID || '863990030700270';
+const MERCHANT_ID = '863990030700270';
 const CARDZONE_MKREQ_URL = process.env.CARDZONE_MKREQ_URL || 'https://uatczsecure.bob.bt/3dss/mkReq';
 const CARDZONE_REDIRECT_URL =
   process.env.CARDZONE_REDIRECT_URL ||
@@ -11,7 +11,7 @@ const CARDZONE_REDIRECT_URL =
   'https://uatczsecure.bob.bt/3dss/mercReq';
 const CARDZONE_PROFILE_URL = process.env.CARDZONE_PROFILE_URL || '';
 const RESPONSE_TYPE = process.env.RESPONSE_TYPE || 'STRING';
-const DEFAULT_CURRENCY = process.env.DEFAULT_CURRENCY || '064';
+const DEFAULT_CURRENCY = '840';
 const ENABLE_MKREQ_MAC = process.env.ENABLE_MKREQ_MAC === 'true';
 const TEMP_DIR = '/tmp'; // Vercel uses /tmp for temp storage
 
@@ -416,6 +416,7 @@ function renderCheckoutPage(baseUrl) {
     .row{display:flex;justify-content:space-between;align-items:center;padding:6px 0}
     .row.total{font-weight:700;font-size:18px}
     .checkout-btn{width:100%;background:#111827;color:#fff;border:0;padding:13px 16px;border-radius:10px;font-weight:700;cursor:pointer}
+    .currency-note{margin-top:-4px;margin-bottom:16px;font-size:13px;color:#374151}
     .legal{margin-top:12px;font-size:12px;color:#6b7280;line-height:1.4}
   </style>
 </head>
@@ -425,9 +426,10 @@ function renderCheckoutPage(baseUrl) {
       <h1>Order Summary</h1>
       <form method="post" action="/start-payment">
         <input type="hidden" name="merchantId" value="${escapeHtml(MERCHANT_ID)}" />
-        <input type="hidden" name="currency" value="${escapeHtml(DEFAULT_CURRENCY)}" />
         <input type="hidden" name="responseType" value="${escapeHtml(RESPONSE_TYPE)}" />
         <input type="hidden" name="responseLink" value="${escapeHtml(baseUrl + '/return?txnId=')}" />
+
+        <div class="currency-note">Currency: <strong>USD (840)</strong></div>
 
         <div class="field">
           <label>Full Name <span class="req">*</span></label>
@@ -522,7 +524,7 @@ async function handleStartPayment(req, res) {
   const requestBaseUrl = getRequestBaseUrl(req);
 
   const purchaseId = (form.purchaseId || generateTxnId()).trim();
-  const merchantId = (form.merchantId || MERCHANT_ID).trim();
+  const merchantId = MERCHANT_ID;
   const orderRef = (form.orderRef || purchaseId).trim();
   const customerRef = (form.customerRef || '').trim();
   const txnId = purchaseId;
@@ -548,11 +550,7 @@ async function handleStartPayment(req, res) {
   });
 
   const profileRes = await fetchCardzoneMerchantProfile(merchantId);
-  const resolvedCurrency = resolveCurrency({
-    requestedCurrency: (form.currency || DEFAULT_CURRENCY).trim(),
-    mkReqRes,
-    profileRes,
-  });
+  const resolvedCurrency = DEFAULT_CURRENCY;
 
   if (mkReqRes.errorCode !== '000' || !mkReqRes.pubKey) {
     return html(res, 400, renderReturnPage('mkReq failed', mkReqRes));
@@ -590,7 +588,7 @@ async function handleStartPayment(req, res) {
     MPI_MERC_ID: tx.merchantId,
     MPI_TRXN_ID: tx.txnId,
     MPI_PURCH_DATE: tx.purchDate,
-    MPI_PURCH_CURR: tx.currency,
+    MPI_PURCH_CURR: '840',
     MPI_PURCH_AMT: tx.amountMinor,
     MPI_RESPONSE_LINK: tx.responseLink,
   };
@@ -814,7 +812,7 @@ async function handleReturn(req, res) {
     merchantId: tx.merchantId,
     status: tx.status || 'PENDING',
     amountMinor: tx.amountMinor,
-    currency: tx.currency,
+    currency: tx.currency === '840' ? 'USD (840)' : `USD (840) [overridden from ${tx.currency}]`,
     createdAt: tx.createdAt,
     callbackReceived,
     callbackData: tx.callback ? {
