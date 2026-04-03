@@ -399,58 +399,96 @@ function renderCheckoutPage(baseUrl) {
 <head>
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
-  <title>Cardzone UAT Checkout</title>
+  <title>Checkout</title>
   <style>
-    body{font-family:Arial,sans-serif;background:#f4f6f8;margin:0;padding:24px;color:#1f2937}
-    .wrap{max-width:820px;margin:0 auto}
-    .card{background:white;border-radius:16px;box-shadow:0 10px 30px rgba(0,0,0,.08);padding:24px}
-    h1{margin:0 0 8px;font-size:28px}
-    p.muted{color:#6b7280;margin:0 0 20px}
-    .grid{display:grid;grid-template-columns:1fr 1fr;gap:16px}
-    label{display:block;font-size:13px;font-weight:700;margin-bottom:6px}
-    input,select{width:100%;padding:12px;border:1px solid #d1d5db;border-radius:10px;box-sizing:border-box}
-    .full{grid-column:1 / -1}
-    button{background:#111827;color:white;border:0;padding:12px 18px;border-radius:10px;font-weight:700;cursor:pointer}
-    .note{margin-top:16px;padding:12px 14px;background:#fff7ed;border:1px solid #fdba74;border-radius:12px;font-size:14px}
-    code{background:#f3f4f6;padding:2px 6px;border-radius:6px}
-    @media (max-width:700px){.grid{grid-template-columns:1fr}}
+    body{font-family:Arial,sans-serif;background:#f8fafc;margin:0;padding:24px;color:#111827}
+    .wrap{max-width:560px;margin:0 auto}
+    .card{background:#fff;border-radius:16px;box-shadow:0 12px 30px rgba(0,0,0,.08);padding:24px}
+    h1{margin:0 0 20px;font-size:28px}
+    label{display:block;font-size:14px;font-weight:700;margin:0 0 6px}
+    .req{color:#dc2626}
+    input,textarea{width:100%;padding:12px;border:1px solid #d1d5db;border-radius:10px;box-sizing:border-box;font-size:14px}
+    textarea{min-height:88px;resize:vertical}
+    .field{margin-bottom:16px}
+    .coupon{display:grid;grid-template-columns:1fr auto;gap:10px}
+    .coupon button{padding:0 16px;border-radius:10px;border:1px solid #111827;background:#fff;color:#111827;font-weight:700;cursor:pointer}
+    .summary{border-top:1px solid #e5e7eb;border-bottom:1px solid #e5e7eb;padding:14px 0;margin:18px 0}
+    .row{display:flex;justify-content:space-between;align-items:center;padding:6px 0}
+    .row.total{font-weight:700;font-size:18px}
+    .checkout-btn{width:100%;background:#111827;color:#fff;border:0;padding:13px 16px;border-radius:10px;font-weight:700;cursor:pointer}
+    .legal{margin-top:12px;font-size:12px;color:#6b7280;line-height:1.4}
   </style>
 </head>
 <body>
   <div class="wrap">
     <div class="card">
-      <h1>Cardzone UAT Checkout</h1>
-      <p class="muted">Vercel-ready hosted payment starter.</p>
+      <h1>Order Summary</h1>
       <form method="post" action="/start-payment">
-        <div class="grid">
-          <div><label>Merchant ID</label><input name="merchantId" value="${escapeHtml(MERCHANT_ID)}" required /></div>
-          <div><label>Currency (ISO 4217 numeric)</label><input name="currency" value="${escapeHtml(DEFAULT_CURRENCY)}" required /><small style="color:#6b7280">If Cardzone profile API is configured, this will be auto-resolved.</small></div>
-          <div><label>Amount</label><input name="amount" value="1.00" required /></div>
-          <div><label>Order / Purchase ID</label><input name="purchaseId" placeholder="Leave blank to auto-generate" /></div>
-          <div><label>Order Reference</label><input name="orderRef" placeholder="Optional merchant order reference" /></div>
-          <div><label>Customer Reference</label><input name="customerRef" placeholder="Optional customer/account reference" /></div>
-          <div><label>Email</label><input name="email" type="email" value="uat@example.com" /></div>
-          <div><label>Mobile phone</label><input name="mobilePhone" value="17123456" /></div>
-          <div><label>Mobile phone country code</label><input name="mobilePhoneCc" value="1" /></div>
-          <div><label>Billing country (ISO 3166-1 numeric)</label><input name="billCountry" value="840" /></div>
-          <div><label>Billing city</label><input name="billCity" value="New York" /></div>
-          <div><label>Billing postcode</label><input name="billPostcode" value="10001" /></div>
-          <div class="full"><label>Billing address line 1</label><input name="billLine1" value="123 Main Street" /></div>
-          <div>
-            <label>Response type</label>
-            <select name="responseType">
-              <option value="STRING" ${RESPONSE_TYPE === 'STRING' ? 'selected' : ''}>STRING</option>
-              <option value="JSON" ${RESPONSE_TYPE === 'JSON' ? 'selected' : ''}>JSON</option>
-              <option value="">Default</option>
-            </select>
-          </div>
-          <div><label>Response link</label><input name="responseLink" value="${escapeHtml(baseUrl + '/return?txnId=')}" /></div>
+        <input type="hidden" name="merchantId" value="${escapeHtml(MERCHANT_ID)}" />
+        <input type="hidden" name="currency" value="${escapeHtml(DEFAULT_CURRENCY)}" />
+        <input type="hidden" name="responseType" value="${escapeHtml(RESPONSE_TYPE)}" />
+        <input type="hidden" name="responseLink" value="${escapeHtml(baseUrl + '/return?txnId=')}" />
+
+        <div class="field">
+          <label>Full Name <span class="req">*</span></label>
+          <input name="customerRef" value="dorjilhendup tenzin2892" required />
         </div>
-        <div style="margin-top:20px"><button type="submit">Start UAT Payment</button></div>
+
+        <div class="field">
+          <label>Email Address <span class="req">*</span></label>
+          <input name="email" type="email" value="dorjilhendup.tenzin2892@bob.bt" required />
+        </div>
+
+        <div class="field">
+          <label>Shipping Address <span class="req">*</span></label>
+          <textarea name="billLine1" required>gvhgvh</textarea>
+        </div>
+
+        <div class="field">
+          <label>Amount <span class="req">*</span></label>
+          <input id="amountInput" name="amount" type="number" min="0.01" step="0.01" value="125.00" required />
+        </div>
+
+        <div class="field">
+          <label>Coupon Code</label>
+          <div class="coupon">
+            <input placeholder="Enter coupon code" />
+            <button type="button">Apply</button>
+          </div>
+        </div>
+
+        <div class="summary">
+          <div class="row"><span>Subtotal</span><span id="subtotalDisplay">$125.00</span></div>
+          <div class="row total"><span>Total</span><span id="totalDisplay">$125.00</span></div>
+        </div>
+
+        <button class="checkout-btn" type="submit">Proceed to Checkout</button>
+        <div class="legal">By completing your purchase, you agree to our terms of service and privacy policy.</div>
       </form>
-      <div class="note">Callback URL used: <code>${escapeHtml(baseUrl + '/callback')}</code></div>
     </div>
   </div>
+  <script>
+    (function () {
+      var amountInput = document.getElementById('amountInput');
+      var subtotalDisplay = document.getElementById('subtotalDisplay');
+      var totalDisplay = document.getElementById('totalDisplay');
+
+      function formatAmount(v) {
+        var n = Number(v);
+        if (!Number.isFinite(n) || n < 0) n = 0;
+        return '$' + n.toFixed(2);
+      }
+
+      function syncTotals() {
+        var formatted = formatAmount(amountInput.value);
+        subtotalDisplay.textContent = formatted;
+        totalDisplay.textContent = formatted;
+      }
+
+      amountInput.addEventListener('input', syncTotals);
+      syncTotals();
+    })();
+  </script>
 </body>
 </html>`;
 }
