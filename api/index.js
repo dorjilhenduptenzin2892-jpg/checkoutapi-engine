@@ -6,7 +6,7 @@ const CARDZONE_MKREQ_URL = process.env.CARDZONE_MKREQ_URL || 'https://uatczsecur
 const CARDZONE_REDIRECT_URL =
   process.env.CARDZONE_REDIRECT_URL ||
   process.env.CARDZONE_MERCREQ_URL ||
-  'https://uatczsecure.bob.bt/3dss/rreq';
+  'https://uatczsecure.bob.bt/3dss/mercReq';
 const RESPONSE_TYPE = process.env.RESPONSE_TYPE || 'STRING';
 const ENABLE_MKREQ_MAC = process.env.ENABLE_MKREQ_MAC === 'true';
 

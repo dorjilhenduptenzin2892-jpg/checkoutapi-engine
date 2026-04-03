@@ -32,7 +32,7 @@ const CARDZONE_MKREQ_URL = process.env.CARDZONE_MKREQ_URL || 'https://uatczsecur
 const CARDZONE_REDIRECT_URL =
   process.env.CARDZONE_REDIRECT_URL ||
   process.env.CARDZONE_MERCREQ_URL ||
-  'https://uatczsecure.bob.bt/3dss/rreq';
+  'https://uatczsecure.bob.bt/3dss/mercReq';
 const CARDZONE_RREQ_URL = process.env.CARDZONE_RREQ_URL || 'https://uatczsecure.bob.bt/3dss/rreq';
 const CARDZONE_CRESP_URL = process.env.CARDZONE_CRESP_URL || 'https://uatczsecure.bob.bt/3dss/cresp';
 const CARDZONE_NOTIFYREQ_URL = process.env.CARDZONE_NOTIFYREQ_URL || 'https://uatczsecure.bob.bt/3dss/notifyReq';

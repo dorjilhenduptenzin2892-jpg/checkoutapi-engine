@@ -32,7 +32,7 @@ const CARDZONE_MKREQ_URL = process.env.CARDZONE_MKREQ_URL || 'https://uatczsecur
 const CARDZONE_REDIRECT_URL =
   process.env.CARDZONE_REDIRECT_URL ||
   process.env.CARDZONE_MERCREQ_URL ||
-  'https://uatczsecure.bob.bt/3dss/rreq';
+  'https://uatczsecure.bob.bt/3dss/mercReq';
 const CARDZONE_RREQ_URL = process.env.CARDZONE_RREQ_URL || 'https://uatczsecure.bob.bt/3dss/rreq';
 const CARDZONE_CRESP_URL = process.env.CARDZONE_CRESP_URL || 'https://uatczsecure.bob.bt/3dss/cresp';
 const CARDZONE_NOTIFYREQ_URL = process.env.CARDZONE_NOTIFYREQ_URL || 'https://uatczsecure.bob.bt/3dss/notifyReq';
@@ -106,19 +106,7 @@ function formatPurchDate(date = new Date()) {
   const hh = String(date.getHours()).padStart(2, '0');
   const mm = String(date.getMinutes()).padStart(2, '0');
   const ss = String(date.getSeconds()).padStart(2, '0');
-  function getRequestBaseUrl(req) {
-    if (process.env.CALLBACK_BASE_URL) {
-      return process.env.CALLBACK_BASE_URL;
-    }
-
-    const protoHeader = (req.headers['x-forwarded-proto'] || 'http').toString();
-    const hostHeader = (req.headers['x-forwarded-host'] || req.headers.host || `localhost:${PORT}`).toString();
-    const proto = protoHeader.split(',')[0].trim() || 'http';
-    const host = hostHeader.split(',')[0].trim() || `localhost:${PORT}`;
-    return `${proto}://${host}`;
-  }
-
-  function renderCheckoutPage(baseUrl = CALLBACK_BASE_URL) {
+  return `${yyyy}${MM}${dd}${hh}${mm}${ss}`;
 }
 
 function amountToMinorUnits(amountText) {
@@ -211,7 +199,7 @@ function mpiReqSignString(fields) {
     fields.MPI_PURCH_DATE,
     fields.MPI_PURCH_CURR,
     fields.MPI_PURCH_AMT,
-                <input name="responseLink" value="${escapeHtml(baseUrl + '/return')}" />
+    fields.MPI_ADDR_MATCH,
     fields.MPI_BILL_ADDR_CITY,
     fields.MPI_BILL_ADDR_STATE,
     fields.MPI_BILL_ADDR_CNTRY,
@@ -220,7 +208,7 @@ function mpiReqSignString(fields) {
     fields.MPI_BILL_ADDR_LINE2,
     fields.MPI_BILL_ADDR_LINE3,
     fields.MPI_SHIP_ADDR_CITY,
-            Callback URL currently used by this app: <code>${escapeHtml(baseUrl + '/callback')}</code><br />
+    fields.MPI_SHIP_ADDR_STATE,
     fields.MPI_SHIP_ADDR_CNTRY,
     fields.MPI_SHIP_ADDR_POSTCODE,
     fields.MPI_SHIP_ADDR_LINE1,
@@ -416,12 +404,12 @@ function renderAutoPostPage(action, fields) {
 </html>`;
 }
 
-  async function appHandler(req, res) {
+function renderReturnPage(title, data) {
   const pretty = escapeHtml(JSON.stringify(data, null, 2));
   return `<!doctype html>
 <html>
 <head>
-        return html(res, 200, renderCheckoutPage(getRequestBaseUrl(req)));
+  <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
   <title>${escapeHtml(title)}</title>
   <style>
@@ -443,23 +431,19 @@ function renderAutoPostPage(action, fields) {
 
 async function handleStartPayment(req, res) {
   const raw = await parseBody(req);
-  }
+  const form = parseForm(raw);
 
-  const server = http.createServer(appHandler);
+  const purchaseId = (form.purchaseId || generateTxnId()).trim();
+  const merchantId = (form.merchantId || MERCHANT_ID).trim();
+  const orderRef = (form.orderRef || purchaseId).trim();
+  const customerRef = (form.customerRef || '').trim();
+  const txnId = purchaseId;
+  const purchDate = formatPurchDate(new Date());
+  const amountMinor = amountToMinorUnits(form.amount || '1');
 
-  if (require.main === module) {
-    server.listen(PORT, HOST, () => {
-      console.log(`Cardzone UAT checkout starter running at http://localhost:${PORT}`);
-      console.log(`Using mkReq URL: ${CARDZONE_MKREQ_URL}`);
-      console.log(`Using redirect URL: ${CARDZONE_REDIRECT_URL}`);
-      console.log(`Reference RReq URL: ${CARDZONE_RREQ_URL}`);
-      console.log(`Reference CRes URL: ${CARDZONE_CRESP_URL}`);
-      console.log(`Reference notifyReq URL: ${CARDZONE_NOTIFYREQ_URL}`);
-      console.log(`Using callback base URL: ${CALLBACK_BASE_URL}`);
-    });
-  }
-
-  module.exports = appHandler;
+  // Cardzone requires unique transaction IDs. Reject duplicates early.
+  if (!txnId) {
+    return html(res, 400, renderReturnPage('Invalid request', {
       error: 'Transaction ID is required',
     }));
   }
