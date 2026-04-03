@@ -22,9 +22,14 @@
 const http = require('http');
 const crypto = require('crypto');
 const { URL } = require('url');
+const fs = require('fs').promises;
+const path = require('path');
 
 const PORT = process.env.PORT || 3000;
 const HOST = process.env.HOST || '0.0.0.0';
+
+// Temp directory for Vercel-safe transaction storage
+const TEMP_DIR = process.env.TEMP_DIR || (process.env.VERCEL ? '/tmp' : require('os').tmpdir());
 
 // Cardzone config
 const MERCHANT_ID = process.env.MERCHANT_ID || '863990030700270';
@@ -367,7 +372,7 @@ function renderCheckoutPage() {
           </div>
           <div>
             <label>Response link</label>
-            <input name="responseLink" value="${escapeHtml(CALLBACK_BASE_URL + '/return')}" />
+            <input name="responseLink" value="${escapeHtml(CALLBACK_BASE_URL + '/return?txnId=')}" />
           </div>
         </div>
         <div style="margin-top:20px;display:flex;gap:12px;align-items:center">
@@ -484,7 +489,7 @@ async function handleStartPayment(req, res) {
     billPostcode: (form.billPostcode || '').trim(),
     billLine1: (form.billLine1 || '').trim(),
     responseType: form.responseType || RESPONSE_TYPE,
-    responseLink: (form.responseLink || `${CALLBACK_BASE_URL}/return`).trim(),
+    responseLink: (form.responseLink || `${CALLBACK_BASE_URL}/return?txnId=${txnId}`).trim(),
     merchantPrivateKeyPem: keys.privateKeyPem,
     merchantPublicKeyPem: keys.publicKeyPem,
     cardzonePublicKeyBase64Url: mkReqRes.pubKey,
@@ -520,6 +525,15 @@ async function handleStartPayment(req, res) {
   tx.status = 'REDIRECTED_TO_HOSTED_PAGE';
   txStore.set(tx.txnId, tx);
 
+  // Also store to file for Vercel persistence
+  try {
+    await fs.mkdir(TEMP_DIR, { recursive: true });
+    const txFile = path.join(TEMP_DIR, `txn_${txnId}.json`);
+    await fs.writeFile(txFile, JSON.stringify(tx, null, 2), 'utf8');
+  } catch (e) {
+    console.error(`Failed to persist transaction to file: ${e.message}`);
+  }
+
   html(res, 200, renderAutoPostPage(CARDZONE_REDIRECT_URL, mpiReq));
 }
 
@@ -539,7 +553,18 @@ async function handleCallback(req, res) {
   }
 
   const txnId = fields.MPI_TRXN_ID || fields.mpiTrxnId || fields.trxnId || '';
-  const tx = txStore.get(txnId);
+  let tx = txStore.get(txnId);
+
+  // If not in memory, try to load from file
+  if (!tx && txnId) {
+    try {
+      const txFile = path.join(TEMP_DIR, `txn_${txnId}.json`);
+      const content = await fs.readFile(txFile, 'utf8');
+      tx = JSON.parse(content);
+    } catch (e) {
+      // File not found or parse error
+    }
+  }
 
   let macVerified = false;
   let verifyNote = 'Skipped: original transaction not found in local memory';
@@ -585,20 +610,72 @@ async function handleCallback(req, res) {
     tx.callback = result;
     tx.status = orderStatus;
     txStore.set(tx.txnId, tx);
+
+    // Persist updated transaction to file
+    try {
+      const txFile = path.join(TEMP_DIR, `txn_${txnId}.json`);
+      await fs.writeFile(txFile, JSON.stringify(tx, null, 2), 'utf8');
+    } catch (e) {
+      console.error(`Failed to update transaction file: ${e.message}`);
+    }
   }
 
   html(res, 200, renderReturnPage('Cardzone callback received', result));
 }
 
-function handleReturn(req, res) {
+async function handleReturn(req, res) {
   const u = new URL(req.url, `http://${req.headers.host}`);
   const txnId = u.searchParams.get('txnId');
-  const tx = txnId ? txStore.get(txnId) : null;
-  html(res, 200, renderReturnPage('Merchant return page', {
-    txnId,
-    tx,
-    note: 'If Cardzone only redirects the browser here, still rely on /callback for final server-side status.',
-  }));
+
+  if (!txnId) {
+    return html(res, 400, renderReturnPage('No transaction reference received', {
+      error: 'No transaction reference received',
+      note: 'The merchant return page requires a txnId query parameter.',
+    }));
+  }
+
+  let tx = txStore.get(txnId);
+
+  // If not in memory, try to load from file
+  if (!tx) {
+    try {
+      const txFile = path.join(TEMP_DIR, `txn_${txnId}.json`);
+      const content = await fs.readFile(txFile, 'utf8');
+      tx = JSON.parse(content);
+    } catch (e) {
+      // File not found or parse error
+    }
+  }
+
+  if (!tx) {
+    return html(res, 404, renderReturnPage('Transaction not found', {
+      txnId,
+      error: 'No transaction record found for this reference.',
+      note: 'The transaction may have expired or the reference may be incorrect.',
+    }));
+  }
+
+  const displayData = {
+    txnId: tx.txnId,
+    orderRef: tx.orderRef,
+    customerRef: tx.customerRef,
+    merchantId: tx.merchantId,
+    status: tx.status || 'UNKNOWN',
+    amountMinor: tx.amountMinor,
+    currency: tx.currency,
+    createdAt: tx.createdAt,
+    callbackReceived: !!tx.callback,
+    callbackData: tx.callback ? {
+      receivedAt: tx.callback.receivedAt,
+      orderStatus: tx.callback.orderStatus,
+      macVerified: tx.callback.macVerified,
+      errorCode: tx.callback.fields?.MPI_ERROR_CODE || null,
+      approvalCode: tx.callback.fields?.MPI_APPR_CODE || null,
+    } : null,
+    note: 'Transaction details retrieved from persistent storage.',
+  };
+
+  html(res, 200, renderReturnPage(`Payment Result: ${tx.status || 'PENDING'}`, displayData));
 }
 
 function handleList(req, res) {
@@ -631,7 +708,7 @@ const server = http.createServer(async (req, res) => {
       return await handleCallback(req, res);
     }
     if (req.method === 'GET' && u.pathname === '/return') {
-      return handleReturn(req, res);
+      return await handleReturn(req, res);
     }
     if (req.method === 'GET' && u.pathname === '/transactions') {
       return handleList(req, res);
