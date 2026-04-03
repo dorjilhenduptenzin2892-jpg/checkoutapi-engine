@@ -22,9 +22,14 @@
 const http = require('http');
 const crypto = require('crypto');
 const { URL } = require('url');
+const fs = require('fs').promises;
+const path = require('path');
 
 const PORT = process.env.PORT || 3000;
 const HOST = process.env.HOST || '0.0.0.0';
+
+// Temp directory for Vercel-safe transaction storage
+const TEMP_DIR = process.env.TEMP_DIR || (process.env.VERCEL ? '/tmp' : require('os').tmpdir());
 
 // Cardzone config
 const MERCHANT_ID = process.env.MERCHANT_ID || '863990030700270';
@@ -36,8 +41,10 @@ const CARDZONE_REDIRECT_URL =
 const CARDZONE_RREQ_URL = process.env.CARDZONE_RREQ_URL || 'https://uatczsecure.bob.bt/3dss/rreq';
 const CARDZONE_CRESP_URL = process.env.CARDZONE_CRESP_URL || 'https://uatczsecure.bob.bt/3dss/cresp';
 const CARDZONE_NOTIFYREQ_URL = process.env.CARDZONE_NOTIFYREQ_URL || 'https://uatczsecure.bob.bt/3dss/notifyReq';
+const CARDZONE_PROFILE_URL = process.env.CARDZONE_PROFILE_URL || '';
 const CALLBACK_BASE_URL = process.env.CALLBACK_BASE_URL || `http://localhost:${PORT}`;
 const RESPONSE_TYPE = process.env.RESPONSE_TYPE || 'STRING'; // STRING | JSON | default blank
+const DEFAULT_CURRENCY = process.env.DEFAULT_CURRENCY || '064';
 
 // If Cardzone enrolled you for key-exchange MAC verification, set to true.
 const ENABLE_MKREQ_MAC = process.env.ENABLE_MKREQ_MAC === 'true';
@@ -239,6 +246,16 @@ function mpiResVerifyString(fields) {
   ].map(v => v || '').join('');
 }
 
+function mapTransactionStatus({ callbackReceived, hasMac, macVerified, errorCode, approvalCode }) {
+  if (!callbackReceived) return 'PENDING';
+  if (hasMac && !macVerified) return 'VERIFY_FAILED';
+
+  const ec = String(errorCode || '').trim();
+  const appr = String(approvalCode || '').trim();
+  if (hasMac && macVerified && ec === '000' && appr) return 'SUCCESS';
+  return 'FAILED';
+}
+
 async function doMkReq({ merchantId, purchaseId, merchantPublicKeyBase64Url, merchantPrivateKeyPem }) {
   const payload = {
     merchantId,
@@ -272,6 +289,83 @@ async function doMkReq({ merchantId, purchaseId, merchantPublicKeyBase64Url, mer
   }
 
   return data;
+}
+
+function normalizeCurrency(value) {
+  const v = String(value || '').trim();
+  return /^\d{3}$/.test(v) ? v : '';
+}
+
+function extractCurrencyCandidates(payload) {
+  if (!payload || typeof payload !== 'object') return [];
+
+  const keys = [
+    'currency', 'currencies', 'currencyCode', 'currencyCodes',
+    'defaultCurrency', 'txnCurrency', 'supportedCurrencies', 'allowedCurrencies',
+  ];
+
+  const out = new Set();
+
+  for (const k of keys) {
+    const raw = payload[k];
+    if (Array.isArray(raw)) {
+      for (const item of raw) {
+        const n = normalizeCurrency(item?.code || item?.currency || item);
+        if (n) out.add(n);
+      }
+      continue;
+    }
+
+    if (raw && typeof raw === 'object') {
+      const n = normalizeCurrency(raw.code || raw.currency || raw.value);
+      if (n) out.add(n);
+      continue;
+    }
+
+    const n = normalizeCurrency(raw);
+    if (n) out.add(n);
+  }
+
+  if (payload.data && typeof payload.data === 'object') {
+    for (const c of extractCurrencyCandidates(payload.data)) out.add(c);
+  }
+
+  return [...out];
+}
+
+async function fetchCardzoneMerchantProfile(merchantId) {
+  if (!CARDZONE_PROFILE_URL) return null;
+  try {
+    const url = CARDZONE_PROFILE_URL.includes('{merchantId}')
+      ? CARDZONE_PROFILE_URL.replace('{merchantId}', encodeURIComponent(merchantId))
+      : CARDZONE_PROFILE_URL;
+
+    const r = await fetch(url, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ merchantId }),
+    });
+
+    const text = await r.text();
+    try {
+      return JSON.parse(text);
+    } catch {
+      return null;
+    }
+  } catch {
+    return null;
+  }
+}
+
+function resolveCurrency({ requestedCurrency, mkReqRes, profileRes }) {
+  const requested = normalizeCurrency(requestedCurrency);
+  const fromProfile = extractCurrencyCandidates(profileRes);
+  const fromMkReq = extractCurrencyCandidates(mkReqRes);
+  const supported = fromProfile.length ? fromProfile : fromMkReq;
+
+  if (!supported.length) return requested || DEFAULT_CURRENCY;
+  if (requested && supported.includes(requested)) return requested;
+  return supported[0];
 }
 
 function renderCheckoutPage() {
@@ -311,7 +405,8 @@ function renderCheckoutPage() {
           </div>
           <div>
             <label>Currency (ISO 4217 numeric)</label>
-            <input name="currency" value="064" required />
+            <input name="currency" value="${escapeHtml(DEFAULT_CURRENCY)}" required />
+            <small style="color:#6b7280">If Cardzone profile API is configured, this will be auto-resolved.</small>
           </div>
           <div>
             <label>Amount</label>
@@ -339,23 +434,23 @@ function renderCheckoutPage() {
           </div>
           <div>
             <label>Mobile phone country code</label>
-            <input name="mobilePhoneCc" value="975" />
+            <input name="mobilePhoneCc" value="1" />
           </div>
           <div>
             <label>Billing country (ISO 3166-1 numeric)</label>
-            <input name="billCountry" value="064" />
+            <input name="billCountry" value="840" />
           </div>
           <div>
             <label>Billing city</label>
-            <input name="billCity" value="Thimphu" />
+            <input name="billCity" value="New York" />
           </div>
           <div>
             <label>Billing postcode</label>
-            <input name="billPostcode" value="11001" />
+            <input name="billPostcode" value="10001" />
           </div>
           <div class="full">
             <label>Billing address line 1</label>
-            <input name="billLine1" value="Clock Tower Square" />
+            <input name="billLine1" value="123 Main Street" />
           </div>
           <div>
             <label>Response type</label>
@@ -367,7 +462,7 @@ function renderCheckoutPage() {
           </div>
           <div>
             <label>Response link</label>
-            <input name="responseLink" value="${escapeHtml(CALLBACK_BASE_URL + '/return')}" />
+            <input name="responseLink" value="${escapeHtml(CALLBACK_BASE_URL + '/return?txnId=')}" />
           </div>
         </div>
         <div style="margin-top:20px;display:flex;gap:12px;align-items:center">
@@ -463,6 +558,13 @@ async function handleStartPayment(req, res) {
     merchantPrivateKeyPem: keys.privateKeyPem,
   });
 
+  const profileRes = await fetchCardzoneMerchantProfile(merchantId);
+  const resolvedCurrency = resolveCurrency({
+    requestedCurrency: (form.currency || DEFAULT_CURRENCY).trim(),
+    mkReqRes,
+    profileRes,
+  });
+
   if (mkReqRes.errorCode !== '000' || !mkReqRes.pubKey) {
     return html(res, 400, renderReturnPage('mkReq failed', mkReqRes));
   }
@@ -475,7 +577,7 @@ async function handleStartPayment(req, res) {
     txnId,
     purchDate,
     amountMinor,
-    currency: (form.currency || '064').trim(),
+    currency: resolvedCurrency,
     email: (form.email || '').trim(),
     mobilePhone: (form.mobilePhone || '').trim(),
     mobilePhoneCc: (form.mobilePhoneCc || '').trim(),
@@ -484,11 +586,13 @@ async function handleStartPayment(req, res) {
     billPostcode: (form.billPostcode || '').trim(),
     billLine1: (form.billLine1 || '').trim(),
     responseType: form.responseType || RESPONSE_TYPE,
-    responseLink: (form.responseLink || `${CALLBACK_BASE_URL}/return`).trim(),
+    responseLink: (form.responseLink || `${CALLBACK_BASE_URL}/return?txnId=${txnId}`).trim(),
     merchantPrivateKeyPem: keys.privateKeyPem,
     merchantPublicKeyPem: keys.publicKeyPem,
     cardzonePublicKeyBase64Url: mkReqRes.pubKey,
     mkReqRes,
+    profileRes,
+    currencySource: profileRes ? 'cardzone-profile' : 'request-or-mkReq',
     status: 'REQUEST_PREPARED',
     createdAt: new Date().toISOString(),
   };
@@ -520,6 +624,15 @@ async function handleStartPayment(req, res) {
   tx.status = 'REDIRECTED_TO_HOSTED_PAGE';
   txStore.set(tx.txnId, tx);
 
+  // Also store to file for Vercel persistence
+  try {
+    await fs.mkdir(TEMP_DIR, { recursive: true });
+    const txFile = path.join(TEMP_DIR, `txn_${txnId}.json`);
+    await fs.writeFile(txFile, JSON.stringify(tx, null, 2), 'utf8');
+  } catch (e) {
+    console.error(`Failed to persist transaction to file: ${e.message}`);
+  }
+
   html(res, 200, renderAutoPostPage(CARDZONE_REDIRECT_URL, mpiReq));
 }
 
@@ -539,7 +652,18 @@ async function handleCallback(req, res) {
   }
 
   const txnId = fields.MPI_TRXN_ID || fields.mpiTrxnId || fields.trxnId || '';
-  const tx = txStore.get(txnId);
+  let tx = txStore.get(txnId);
+
+  // If not in memory, try to load from file
+  if (!tx && txnId) {
+    try {
+      const txFile = path.join(TEMP_DIR, `txn_${txnId}.json`);
+      const content = await fs.readFile(txFile, 'utf8');
+      tx = JSON.parse(content);
+    } catch (e) {
+      // File not found or parse error
+    }
+  }
 
   let macVerified = false;
   let verifyNote = 'Skipped: original transaction not found in local memory';
@@ -555,21 +679,13 @@ async function handleCallback(req, res) {
     verifyNote = macVerified ? 'MPIRes MAC verified successfully' : 'MPIRes MAC verification failed';
   }
 
-  if (tx) {
-    if (!fields.MPI_MAC) {
-      orderStatus = 'REVIEW_REQUIRED_NO_MAC';
-    } else if (!macVerified) {
-      // If MAC verification fails, merchant should do inquiry before finalizing status.
-      orderStatus = 'REVIEW_REQUIRED_MAC_FAILED';
-    } else if ((fields.MPI_ERROR_CODE || '') === '000') {
-      orderStatus = 'SUCCESS';
-    } else if ((fields.MPI_ERROR_CODE || '') === 'TO') {
-      // On timeout response, merchant should do inquiry before retrying.
-      orderStatus = 'PENDING_INQUIRY_REQUIRED';
-    } else {
-      orderStatus = 'FAILED';
-    }
-  }
+  orderStatus = mapTransactionStatus({
+    callbackReceived: true,
+    hasMac: !!fields.MPI_MAC,
+    macVerified,
+    errorCode: fields.MPI_ERROR_CODE,
+    approvalCode: fields.MPI_APPR_CODE,
+  });
 
   const result = {
     receivedAt: new Date().toISOString(),
@@ -578,6 +694,7 @@ async function handleCallback(req, res) {
     macVerified,
     verifyNote,
     orderStatus,
+    rawPayload: raw,
     fields,
   };
 
@@ -585,20 +702,161 @@ async function handleCallback(req, res) {
     tx.callback = result;
     tx.status = orderStatus;
     txStore.set(tx.txnId, tx);
+
+    // Persist updated transaction to file
+    try {
+      const txFile = path.join(TEMP_DIR, `txn_${txnId}.json`);
+      await fs.writeFile(txFile, JSON.stringify(tx, null, 2), 'utf8');
+    } catch (e) {
+      console.error(`Failed to update transaction file: ${e.message}`);
+    }
   }
 
   html(res, 200, renderReturnPage('Cardzone callback received', result));
 }
 
-function handleReturn(req, res) {
+async function handleReturn(req, res) {
   const u = new URL(req.url, `http://${req.headers.host}`);
-  const txnId = u.searchParams.get('txnId');
-  const tx = txnId ? txStore.get(txnId) : null;
-  html(res, 200, renderReturnPage('Merchant return page', {
-    txnId,
-    tx,
-    note: 'If Cardzone only redirects the browser here, still rely on /callback for final server-side status.',
-  }));
+  
+  // Extract txnId from query params (works for both GET and POST)
+  let txnId = u.searchParams.get('txnId');
+  
+  // For POST requests, also check the request body for MPI fields
+  let mpiFields = {};
+  let rawReturnPayload = '';
+  if (req.method === 'POST') {
+    rawReturnPayload = await parseBody(req);
+    const contentType = (req.headers['content-type'] || '').toLowerCase();
+    
+    if (contentType.includes('application/json')) {
+      try {
+        mpiFields = JSON.parse(rawReturnPayload || '{}');
+      } catch (e) {
+        mpiFields = {};
+      }
+    } else {
+      mpiFields = parseForm(rawReturnPayload);
+    }
+    
+    // Extract txnId from POST body if not in query params
+    if (!txnId) {
+      txnId = mpiFields.MPI_TRXN_ID || mpiFields.txnId || '';
+    }
+  }
+
+  if (!txnId) {
+    return html(res, 400, renderReturnPage('No transaction reference received', {
+      error: 'No transaction reference received',
+      note: 'The transaction reference must be provided via query parameter (txnId) or POST field (MPI_TRXN_ID).',
+    }));
+  }
+
+  let tx = txStore.get(txnId);
+
+  // If not in memory, try to load from file
+  if (!tx) {
+    try {
+      const txFile = path.join(TEMP_DIR, `txn_${txnId}.json`);
+      const content = await fs.readFile(txFile, 'utf8');
+      tx = JSON.parse(content);
+    } catch (e) {
+      // File not found or parse error
+    }
+  }
+
+  if (!tx) {
+    return html(res, 404, renderReturnPage('Transaction not found', {
+      txnId,
+      error: 'No transaction record found for this reference.',
+      note: 'The transaction may have expired or the reference may be incorrect.',
+    }));
+  }
+
+  // If this is a POST with MPI response fields, update the transaction
+  if (req.method === 'POST' && Object.keys(mpiFields).length > 0) {
+    let macVerified = false;
+    let verifyNote = 'No MAC in response';
+    let orderStatus = tx.status || 'PENDING';
+
+    if (mpiFields.MPI_MAC && tx.cardzonePublicKeyBase64Url) {
+      const verifyString = mpiResVerifyString(mpiFields);
+      macVerified = verifySha256WithRsaBase64Url(
+        verifyString,
+        mpiFields.MPI_MAC,
+        tx.cardzonePublicKeyBase64Url,
+      );
+      verifyNote = macVerified ? 'MPIRes MAC verified successfully' : 'MPIRes MAC verification failed';
+    }
+
+    orderStatus = mapTransactionStatus({
+      callbackReceived: true,
+      hasMac: !!mpiFields.MPI_MAC,
+      macVerified,
+      errorCode: mpiFields.MPI_ERROR_CODE,
+      approvalCode: mpiFields.MPI_APPR_CODE,
+    });
+
+    // Update transaction with callback data
+    tx.callback = {
+      receivedAt: new Date().toISOString(),
+      method: req.method,
+      macVerified,
+      verifyNote,
+      orderStatus,
+      rawPayload: rawReturnPayload,
+      fields: mpiFields,
+    };
+    tx.status = orderStatus;
+    txStore.set(tx.txnId, tx);
+
+    // Persist updated transaction to file
+    try {
+      const txFile = path.join(TEMP_DIR, `txn_${txnId}.json`);
+      await fs.writeFile(txFile, JSON.stringify(tx, null, 2), 'utf8');
+    } catch (e) {
+      console.error(`Failed to update transaction file: ${e.message}`);
+    }
+  }
+
+  const callbackReceived = !!tx.callback;
+  const mappedStatus = mapTransactionStatus({
+    callbackReceived,
+    hasMac: !!tx.callback?.fields?.MPI_MAC,
+    macVerified: !!tx.callback?.macVerified,
+    errorCode: tx.callback?.fields?.MPI_ERROR_CODE,
+    approvalCode: tx.callback?.fields?.MPI_APPR_CODE,
+  });
+
+  tx.status = mappedStatus;
+
+  const displayData = {
+    txnId: tx.txnId,
+    orderRef: tx.orderRef,
+    customerRef: tx.customerRef,
+    merchantId: tx.merchantId,
+    status: tx.status || 'PENDING',
+    amountMinor: tx.amountMinor,
+    currency: tx.currency,
+    createdAt: tx.createdAt,
+    callbackReceived,
+    callbackData: tx.callback ? {
+      receivedAt: tx.callback.receivedAt,
+      orderStatus: tx.callback.orderStatus,
+      macVerified: tx.callback.macVerified,
+      verifyNote: tx.callback.verifyNote,
+      rawPayload: tx.callback.rawPayload || null,
+      mpiErrorCode: tx.callback.fields?.MPI_ERROR_CODE || null,
+      mpiErrorDesc: tx.callback.fields?.MPI_ERROR_DESC || null,
+      mpiApprCode: tx.callback.fields?.MPI_APPR_CODE || null,
+      mpiRrn: tx.callback.fields?.MPI_RRN || null,
+      mpiReferralCode: tx.callback.fields?.MPI_REFERRAL_CODE || null,
+      mpiBin: tx.callback.fields?.MPI_BIN || null,
+      allResponseFields: tx.callback.fields || {},
+    } : null,
+    note: 'Transaction details retrieved from persistent storage.',
+  };
+
+  html(res, 200, renderReturnPage(`Payment Result: ${tx.status || 'PENDING'}`, displayData));
 }
 
 function handleList(req, res) {
@@ -630,8 +888,8 @@ const server = http.createServer(async (req, res) => {
     if (req.method === 'POST' && u.pathname === '/callback') {
       return await handleCallback(req, res);
     }
-    if (req.method === 'GET' && u.pathname === '/return') {
-      return handleReturn(req, res);
+    if ((req.method === 'GET' || req.method === 'POST') && u.pathname === '/return') {
+      return await handleReturn(req, res);
     }
     if (req.method === 'GET' && u.pathname === '/transactions') {
       return handleList(req, res);

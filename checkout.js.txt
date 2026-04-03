@@ -246,6 +246,16 @@ function mpiResVerifyString(fields) {
   ].map(v => v || '').join('');
 }
 
+function mapTransactionStatus({ callbackReceived, hasMac, macVerified, errorCode, approvalCode }) {
+  if (!callbackReceived) return 'PENDING';
+  if (hasMac && !macVerified) return 'VERIFY_FAILED';
+
+  const ec = String(errorCode || '').trim();
+  const appr = String(approvalCode || '').trim();
+  if (hasMac && macVerified && ec === '000' && appr) return 'SUCCESS';
+  return 'FAILED';
+}
+
 async function doMkReq({ merchantId, purchaseId, merchantPublicKeyBase64Url, merchantPrivateKeyPem }) {
   const payload = {
     merchantId,
@@ -669,21 +679,13 @@ async function handleCallback(req, res) {
     verifyNote = macVerified ? 'MPIRes MAC verified successfully' : 'MPIRes MAC verification failed';
   }
 
-  if (tx) {
-    if (!fields.MPI_MAC) {
-      orderStatus = 'REVIEW_REQUIRED_NO_MAC';
-    } else if (!macVerified) {
-      // If MAC verification fails, merchant should do inquiry before finalizing status.
-      orderStatus = 'REVIEW_REQUIRED_MAC_FAILED';
-    } else if ((fields.MPI_ERROR_CODE || '') === '000') {
-      orderStatus = 'SUCCESS';
-    } else if ((fields.MPI_ERROR_CODE || '') === 'TO') {
-      // On timeout response, merchant should do inquiry before retrying.
-      orderStatus = 'PENDING_INQUIRY_REQUIRED';
-    } else {
-      orderStatus = 'FAILED';
-    }
-  }
+  orderStatus = mapTransactionStatus({
+    callbackReceived: true,
+    hasMac: !!fields.MPI_MAC,
+    macVerified,
+    errorCode: fields.MPI_ERROR_CODE,
+    approvalCode: fields.MPI_APPR_CODE,
+  });
 
   const result = {
     receivedAt: new Date().toISOString(),
@@ -692,6 +694,7 @@ async function handleCallback(req, res) {
     macVerified,
     verifyNote,
     orderStatus,
+    rawPayload: raw,
     fields,
   };
 
@@ -720,18 +723,19 @@ async function handleReturn(req, res) {
   
   // For POST requests, also check the request body for MPI fields
   let mpiFields = {};
+  let rawReturnPayload = '';
   if (req.method === 'POST') {
-    const raw = await parseBody(req);
+    rawReturnPayload = await parseBody(req);
     const contentType = (req.headers['content-type'] || '').toLowerCase();
     
     if (contentType.includes('application/json')) {
       try {
-        mpiFields = JSON.parse(raw || '{}');
+        mpiFields = JSON.parse(rawReturnPayload || '{}');
       } catch (e) {
         mpiFields = {};
       }
     } else {
-      mpiFields = parseForm(raw);
+      mpiFields = parseForm(rawReturnPayload);
     }
     
     // Extract txnId from POST body if not in query params
@@ -784,17 +788,13 @@ async function handleReturn(req, res) {
       verifyNote = macVerified ? 'MPIRes MAC verified successfully' : 'MPIRes MAC verification failed';
     }
 
-    if (!mpiFields.MPI_MAC) {
-      orderStatus = 'REVIEW_REQUIRED_NO_MAC';
-    } else if (!macVerified) {
-      orderStatus = 'REVIEW_REQUIRED_MAC_FAILED';
-    } else if ((mpiFields.MPI_ERROR_CODE || '') === '000') {
-      orderStatus = 'SUCCESS';
-    } else if ((mpiFields.MPI_ERROR_CODE || '') === 'TO') {
-      orderStatus = 'PENDING_INQUIRY_REQUIRED';
-    } else if (mpiFields.MPI_ERROR_CODE) {
-      orderStatus = 'FAILED';
-    }
+    orderStatus = mapTransactionStatus({
+      callbackReceived: true,
+      hasMac: !!mpiFields.MPI_MAC,
+      macVerified,
+      errorCode: mpiFields.MPI_ERROR_CODE,
+      approvalCode: mpiFields.MPI_APPR_CODE,
+    });
 
     // Update transaction with callback data
     tx.callback = {
@@ -803,6 +803,7 @@ async function handleReturn(req, res) {
       macVerified,
       verifyNote,
       orderStatus,
+      rawPayload: rawReturnPayload,
       fields: mpiFields,
     };
     tx.status = orderStatus;
@@ -817,23 +818,40 @@ async function handleReturn(req, res) {
     }
   }
 
+  const callbackReceived = !!tx.callback;
+  const mappedStatus = mapTransactionStatus({
+    callbackReceived,
+    hasMac: !!tx.callback?.fields?.MPI_MAC,
+    macVerified: !!tx.callback?.macVerified,
+    errorCode: tx.callback?.fields?.MPI_ERROR_CODE,
+    approvalCode: tx.callback?.fields?.MPI_APPR_CODE,
+  });
+
+  tx.status = mappedStatus;
+
   const displayData = {
     txnId: tx.txnId,
     orderRef: tx.orderRef,
     customerRef: tx.customerRef,
     merchantId: tx.merchantId,
-    status: tx.status || 'UNKNOWN',
+    status: tx.status || 'PENDING',
     amountMinor: tx.amountMinor,
     currency: tx.currency,
     createdAt: tx.createdAt,
-    callbackReceived: !!tx.callback,
+    callbackReceived,
     callbackData: tx.callback ? {
       receivedAt: tx.callback.receivedAt,
       orderStatus: tx.callback.orderStatus,
       macVerified: tx.callback.macVerified,
       verifyNote: tx.callback.verifyNote,
-      errorCode: tx.callback.fields?.MPI_ERROR_CODE || null,
-      approvalCode: tx.callback.fields?.MPI_APPR_CODE || null,
+      rawPayload: tx.callback.rawPayload || null,
+      mpiErrorCode: tx.callback.fields?.MPI_ERROR_CODE || null,
+      mpiErrorDesc: tx.callback.fields?.MPI_ERROR_DESC || null,
+      mpiApprCode: tx.callback.fields?.MPI_APPR_CODE || null,
+      mpiRrn: tx.callback.fields?.MPI_RRN || null,
+      mpiReferralCode: tx.callback.fields?.MPI_REFERRAL_CODE || null,
+      mpiBin: tx.callback.fields?.MPI_BIN || null,
+      allResponseFields: tx.callback.fields || {},
     } : null,
     note: 'Transaction details retrieved from persistent storage.',
   };
