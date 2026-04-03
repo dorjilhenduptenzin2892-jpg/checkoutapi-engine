@@ -45,6 +45,7 @@ const CARDZONE_PROFILE_URL = process.env.CARDZONE_PROFILE_URL || '';
 const CALLBACK_BASE_URL = process.env.CALLBACK_BASE_URL || `http://localhost:${PORT}`;
 const RESPONSE_TYPE = process.env.RESPONSE_TYPE || 'STRING'; // STRING | JSON | default blank
 const DEFAULT_CURRENCY = process.env.DEFAULT_CURRENCY || '064';
+const MPIREQ_INCLUDE_RESPONSE_LINK_IN_MAC = process.env.MPIREQ_INCLUDE_RESPONSE_LINK_IN_MAC === 'true';
 
 // If Cardzone enrolled you for key-exchange MAC verification, set to true.
 const ENABLE_MKREQ_MAC = process.env.ENABLE_MKREQ_MAC === 'true';
@@ -188,13 +189,14 @@ function mkReqSignString({ merchantId, purchaseId, pubKey }) {
 
 // Cardzone transaction request MAC field order from the PDF.
 // All values are concatenated as a plain string, no special separator.
-function mpiReqSignString(fields) {
+function mpiReqSignString(fields, options = {}) {
+  const includeResponseLink = !!options.includeResponseLink;
   const lineItems = Array.isArray(fields.MPI_LINE_ITEM) ? fields.MPI_LINE_ITEM : [];
   const flattenedLineItems = lineItems
     .map(item => `${item.MPI_ITEM_ID || ''}${item.MPI_ITEM_REMARK || ''}${item.MPI_ITEM_QUANTITY || ''}${item.MPI_ITEM_AMOUNT || ''}${item.MPI_ITEM_CURRENCY || ''}`)
     .join('');
 
-  return [
+  const signParts = [
     fields.MPI_TRANS_TYPE,
     fields.MPI_MERC_ID,
     fields.MPI_PAN,
@@ -230,8 +232,13 @@ function mpiReqSignString(fields) {
     fields.MPI_MOBILE_PHONE_CC,
     flattenedLineItems,
     fields.MPI_RESPONSE_TYPE,
-    fields.MPI_RESPONSE_LINK,
-  ].map(v => v || '').join('');
+  ];
+
+  if (includeResponseLink) {
+    signParts.push(fields.MPI_RESPONSE_LINK);
+  }
+
+  return signParts.map(v => v || '').join('');
 }
 
 function mpiResVerifyString(fields) {
@@ -616,10 +623,19 @@ async function handleStartPayment(req, res) {
     MPI_RESPONSE_LINK: tx.responseLink,
   };
 
+  const macVariant = MPIREQ_INCLUDE_RESPONSE_LINK_IN_MAC
+    ? 'spec+MPI_RESPONSE_LINK'
+    : 'spec';
+  const mpiReqSignInput = mpiReqSignString(mpiReq, {
+    includeResponseLink: MPIREQ_INCLUDE_RESPONSE_LINK_IN_MAC,
+  });
+
   mpiReq.MPI_MAC = signSha256WithRsaBase64Url(
-    mpiReqSignString(mpiReq),
+    mpiReqSignInput,
     tx.merchantPrivateKeyPem,
   );
+
+  console.log('[Cardzone][signing] MAC variant=', macVariant);
 
   tx.requestFields = mpiReq;
   tx.status = 'REDIRECTED_TO_HOSTED_PAGE';
