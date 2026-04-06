@@ -672,7 +672,7 @@ async function handleReturn(req, res) {
     renderMessagePage(
       `Payment Result: ${effectiveStatus}`,
       tx.macVerification?.macVerified && effectiveStatus === 'FAILED'
-        ? 'Integration succeeded, but Cardzone/host returned a failed transaction response.'
+        ? 'Integration succeeded, but the transaction was declined by Cardzone/host.'
         : 'Payment status resolved from backend transaction record.',
       {
         integrationStatus: tx.macVerification?.macVerified
