@@ -621,17 +621,20 @@ async function handleReturn(req, res) {
     );
   }
 
-  if (!finalStatuses.has(tx.status)) {
+  const callbackReceived = !!tx.callback;
+  const hasFinalState = callbackReceived && finalStatuses.has(tx.status);
+
+  if (!hasFinalState) {
     return html(
       res,
       202,
       renderMessagePage(
         'Payment processing',
-        'Final payment status is not available yet. Please check again after callback is received.',
+        'Final payment status is not available yet. Waiting for Cardzone callback.',
         {
           txnId: tx.txnId,
           status: tx.status,
-          callbackReceived: !!tx.callback,
+          callbackReceived,
         }
       )
     );
