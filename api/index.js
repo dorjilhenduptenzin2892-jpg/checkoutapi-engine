@@ -574,6 +574,7 @@ async function handleCallback(req, res) {
     method: req.method,
     contentType,
     fields,
+    rawResponseFields: { ...fields },
     rawPayload: raw,
   };
   tx.macVerification = {
@@ -651,16 +652,33 @@ async function handleReturn(req, res) {
   return html(
     res,
     200,
-    renderMessagePage(`Payment Result: ${tx.status}`, 'Payment status resolved from backend transaction record.', {
-      txnId: tx.txnId,
-      status: tx.status,
-      amountMinor: tx.amountMinor,
-      currency: tx.currency,
-      orderRef: tx.orderRef,
-      merchantId: tx.merchantId,
-      errorCode: tx.callback?.fields?.MPI_ERROR_CODE || null,
-      errorDesc: tx.callback?.fields?.MPI_ERROR_DESC || null,
-    })
+    renderMessagePage(
+      `Payment Result: ${tx.status}`,
+      tx.macVerification?.macVerified && tx.status === 'FAILED'
+        ? 'Payment integration succeeded, but transaction was declined by Cardzone/host.'
+        : 'Payment status resolved from backend transaction record.',
+      {
+        integrationStatus: tx.macVerification?.macVerified
+          ? 'INTEGRATION_SUCCESS'
+          : tx.status === 'VERIFY_FAILED'
+            ? 'INTEGRATION_VERIFY_FAILED'
+            : 'INTEGRATION_PENDING_OR_NOT_VERIFIED',
+        txnId: tx.txnId,
+        status: tx.status,
+        amountMinor: tx.amountMinor,
+        currency: tx.currency,
+        orderRef: tx.orderRef,
+        merchantId: tx.merchantId,
+        callbackReceived,
+        macVerified: tx.macVerification?.macVerified ?? null,
+        MPI_ERROR_CODE: tx.callback?.fields?.MPI_ERROR_CODE || null,
+        MPI_ERROR_DESC: tx.callback?.fields?.MPI_ERROR_DESC || null,
+        MPI_APPR_CODE: tx.callback?.fields?.MPI_APPR_CODE || null,
+        MPI_RRN: tx.callback?.fields?.MPI_RRN || null,
+        MPI_REFERRAL_CODE: tx.callback?.fields?.MPI_REFERRAL_CODE || null,
+        allResponseFields: tx.callback?.rawResponseFields || tx.callback?.fields || {},
+      }
+    )
   );
 }
 
