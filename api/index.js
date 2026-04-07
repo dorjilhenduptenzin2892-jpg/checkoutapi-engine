@@ -756,6 +756,16 @@ module.exports = async function handler(req, res) {
       return await handleInitiate(req, res);
     }
 
+    if (req.method === 'GET' && (u.pathname === '/callback' || u.pathname === '/api/callback')) {
+      const txnId =
+        u.searchParams.get('txnId') ||
+        u.searchParams.get('MPI_TRXN_ID') ||
+        u.searchParams.get('trxnId') ||
+        '';
+      const returnPath = txnId ? `/api/return?txnId=${encodeURIComponent(txnId)}` : '/api/return';
+      return redirect(res, returnPath);
+    }
+
     if (req.method === 'POST' && (u.pathname === '/callback' || u.pathname === '/api/callback')) {
       return await handleCallback(req, res);
     }
