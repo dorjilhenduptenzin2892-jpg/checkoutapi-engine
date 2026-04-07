@@ -10,7 +10,7 @@ const CARDZONE_REDIRECT_URL =
   process.env.CARDZONE_REDIRECT_URL ||
   process.env.CARDZONE_MERCREQ_URL ||
   'https://3dsecure.bob.bt/3dss/mercReq';
-const DEFAULT_CURRENCY = '840';
+const DEFAULT_CURRENCY = '356'; // INR - Indian Rupee
 const ENABLE_MKREQ_MAC = process.env.ENABLE_MKREQ_MAC === 'true';
 const TEMP_DIR = process.env.VERCEL ? '/tmp' : path.join(os.tmpdir(), 'cardzone-backend');
 
@@ -416,6 +416,7 @@ async function handleInitiate(req, res) {
 
   const merchantId = String(input.merchantId || MERCHANT_ID_DEFAULT || '').trim();
   const amount = String(input.amount || '').trim();
+  const currency = String(input.currency || DEFAULT_CURRENCY || '').trim() || DEFAULT_CURRENCY;
   const orderRef = String(input.orderRef || '').trim();
   const customerRef = String(input.customerRef || '').trim();
   const customerName = String(input.customerName || '').trim();
@@ -490,7 +491,7 @@ async function handleInitiate(req, res) {
     MPI_MERC_ID: merchantId,
     MPI_TRXN_ID: txnId,
     MPI_PURCH_DATE: purchDate,
-    MPI_PURCH_CURR: DEFAULT_CURRENCY,
+    MPI_PURCH_CURR: currency,
     MPI_PURCH_AMT: amountMinor,
     MPI_RESPONSE_LINK: callbackUrl,
   };
@@ -519,7 +520,7 @@ async function handleInitiate(req, res) {
     merchantId,
     amountMinor,
     amountMajor: amount,
-    currency: DEFAULT_CURRENCY,
+    currency,
     createdAt: new Date().toISOString(),
     updatedAt: new Date().toISOString(),
     successReturnUrl,

@@ -11,6 +11,7 @@ Paste this script near the bottom of your merchant checkout page, before `</body
 
     // ===== Page selectors (customize these) =====
     const amountSelector = '#amount';
+    const currencySelector = '#currency';
     const orderRefSelector = '#orderRef';
     const customerNameSelector = '#customerName';
     const emailSelector = '#email';
@@ -38,6 +39,7 @@ Paste this script near the bottom of your merchant checkout page, before `</body
       event.preventDefault();
 
       const amount = getValue(amountSelector);
+      const currency = getValue(currencySelector) || '356'; // 356 = INR, 840 = USD
       const orderRef = getValue(orderRefSelector);
       const customerName = getValue(customerNameSelector);
       const email = getValue(emailSelector);
@@ -58,6 +60,7 @@ Paste this script near the bottom of your merchant checkout page, before `</body
 
       form.appendChild(buildHidden('merchantId', merchantId));
       form.appendChild(buildHidden('amount', amount));
+      form.appendChild(buildHidden('currency', currency));
       form.appendChild(buildHidden('orderRef', orderRef));
       form.appendChild(buildHidden('customerRef', customerRef));
 
@@ -85,4 +88,5 @@ Paste this script near the bottom of your merchant checkout page, before `</body
 Notes:
 - Do not collect PAN, expiry, CVV, or cardholder name on merchant page.
 - Keep all secure Cardzone logic only on backend.
-- Backend forces currency to USD (840).
+- Send `currency` from merchant site as a numeric ISO code, for example `356` for INR or `840` for USD.
+- If `currency` is omitted, backend falls back to `356` (INR).
